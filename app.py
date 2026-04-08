@@ -25,7 +25,8 @@ bot = Client(
     "comic",
     api_id=API_ID,
     api_hash=API_HASH,
-    bot_token=BOT_TOKEN
+    bot_token=BOT_TOKEN,
+    sleep_threshold=30 # Ye network stability mein help karega
 )
 
 def main():
