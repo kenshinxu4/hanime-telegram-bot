@@ -1,3 +1,4 @@
+import os
 from pyrogram import *
 from pyrogram.types import *
 import requests
@@ -7,7 +8,7 @@ import subprocess
 import json
 
 MONGO_URL = os.environ.get("MONGO_URL", None) 
-CACHE_CHANNEL = os.environ.get(int("CACHE_CHANNEL"))
+CACHE_CHANNEL = int(os.environ.get("CACHE_CHANNEL", "-100123456789"))
 
 def hentailink(client, callback_query):
     click = callback_query.data
