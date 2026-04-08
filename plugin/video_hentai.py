@@ -10,33 +10,6 @@ CACHE_CHANNEL = int(os.environ.get("CACHE_CHANNEL", "-100123456789"))
 hentaidb = MongoClient(MONGO_URL)
 db_collection = hentaidb["MangaDb"]["Name"]
 
-async def hentailink(client, callback_query):
-    link = callback_query.data.split("_")[1]
-    url = f"https://apikatsu.otakatsu.studio/api/hanime/link?id={link}" 
-    data = requests.get(url).json().get("data", [])
-    
-    if not data:
-        await callback_query.answer("Links not found!", show_alert=True)
-        return
-
-    # Automatically picking available links
-    keyb = []
-    for item in data:
-        if item.get("url"):
-            keyb.append([InlineKeyboardButton(f"Stream {item['height']}p", url=item['url'])])
-    
-    keyb.append([InlineKeyboardButton("Back", callback_data=f"info_{link}")])
-    repl = InlineKeyboardMarkup(keyb)
-    
-    text = f"You are now watching: `https://hanime.tv/videos/hentai/{link}`\n\nShared by @KENSHIN_ANIME"
-    await client.edit_message_text(
-        chat_id=callback_query.from_user.id,
-        message_id=callback_query.message.id,
-        text=text,
-        reply_markup=repl,
-        parse_mode=enums.ParseMode.MARKDOWN
-    )
-
 async def hentaidl(client, callback_query):
     link = callback_query.data.split("_")[1]
     chatid = callback_query.from_user.id
@@ -46,7 +19,8 @@ async def hentaidl(client, callback_query):
     is_hentai = db_collection.find_one({"name": link})
     if is_hentai:
         await callback_query.edit_message_text("Status: **UPLOADING**", parse_mode=enums.ParseMode.MARKDOWN)
-        await client.send_document(chat_id=chatid, document=is_hentai["file_id"], caption="Downloaded By @KENSHIN_ANIME)
+        # Fix yahan hai (Ending quotes added)
+        await client.send_document(chat_id=chatid, document=is_hentai["file_id"], caption="Downloaded By @KENSHIN_ANIME")
         return
 
     # If not in DB, download using ffmpeg
@@ -61,7 +35,8 @@ async def hentaidl(client, callback_query):
         
         await callback_query.edit_message_text("Status: **UPLOADING**", parse_mode=enums.ParseMode.MARKDOWN)
         
-        sent_msg = await client.send_document(chat_id=chatid, document=file_name, caption="Download By @KENSHIN_ANIME)
+        # Yahan bhi check kar lena quotes sahi hain
+        sent_msg = await client.send_document(chat_id=chatid, document=file_name, caption="Downloaded By @KENSHIN_ANIME")
         file_id = sent_msg.document.file_id
         
         # Save to Cache and DB
