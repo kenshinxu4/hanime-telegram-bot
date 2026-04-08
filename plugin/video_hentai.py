@@ -1,95 +1,73 @@
 import os
-from pyrogram import *
-from pyrogram.types import *
-import requests
-from pymongo import MongoClient
-import os
 import subprocess
-import json
+import requests
+from pyrogram import Client, enums
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from pymongo import MongoClient
 
-MONGO_URL = os.environ.get("MONGO_URL", None) 
+MONGO_URL = os.environ.get("MONGO_URL") 
 CACHE_CHANNEL = int(os.environ.get("CACHE_CHANNEL", "-100123456789"))
+hentaidb = MongoClient(MONGO_URL)
+db_collection = hentaidb["MangaDb"]["Name"]
 
-def hentailink(client, callback_query):
-    click = callback_query.data
-    clickSplit = click.split("_")
-    link = clickSplit[1]
-    chatid = callback_query.from_user.id
-    messageid = callback_query.message.message_id
+async def hentailink(client, callback_query):
+    link = callback_query.data.split("_")[1]
     url = f"https://apikatsu.otakatsu.studio/api/hanime/link?id={link}" 
-    result = requests.get(url) 
-    result = result.json()  
-    url = result["data"][0]["url"]
-    if not url == "":
-        url1 = result["data"][0]["url"]
-        url2 = result["data"][1]["url"]
-        url3 = result["data"][2]["url"]        
-        keyb = [
-            [InlineKeyboardButton("360p", url=f"{url3}")],
-            [InlineKeyboardButton("480p", url=f"{url2}")],
-            [InlineKeyboardButton("720p", url=f"{url1}")],
-            [InlineKeyboardButton("Back", callback_data=f"info_{link}")]
-        
-        ]
-        repl = InlineKeyboardMarkup(keyb)
-        client.edit_message_text(chat_id=chatid, message_id=messageid, text=f"""You are now watching **Episode https://hanime.tv/videos/hentai/{link}** :-\nPlease share the bot if you like it ☺️.""", reply_markup=repl, parse_mode="markdown")
-        
-    if url == "":
-        url1 = result["data"][1]["url"]
-        url2 = result["data"][2]["url"]
-        url3 = result["data"][3]["url"]
-        keyb = [
-            [InlineKeyboardButton("360p", url=f"{url3}")],
-            [InlineKeyboardButton("480p", url=f"{url2}")],
-            [InlineKeyboardButton("720p", url=f"{url1}")],
-            [InlineKeyboardButton("Back", callback_data=f"info_{link}")]
-        
-        ]
-        repl = InlineKeyboardMarkup(keyb)
-        client.edit_message_text(chat_id=chatid, message_id=messageid, text=f"""You are now watching **Episode https://hanime.tv/videos/hentai/{link}** :-\nPlease share the bot if you like it ☺️.""", reply_markup=repl, parse_mode="markdown")
-        
-def hentaidl(client, callback_query):
-    click = callback_query.data
-    clickSplit = click.split("_")
-    link = clickSplit[1]
-    hentaidb = MongoClient(MONGO_URL)
-    hentai = hentaidb["MangaDb"]["Name"]
+    data = requests.get(url).json().get("data", [])
+    
+    if not data:
+        await callback_query.answer("Links not found!", show_alert=True)
+        return
+
+    # Automatically picking available links
+    keyb = []
+    for item in data:
+        if item.get("url"):
+            keyb.append([InlineKeyboardButton(f"Stream {item['height']}p", url=item['url'])])
+    
+    keyb.append([InlineKeyboardButton("Back", callback_data=f"info_{link}")])
+    repl = InlineKeyboardMarkup(keyb)
+    
+    text = f"You are now watching: `https://hanime.tv/videos/hentai/{link}`\n\nShared by @KENSHIN_ANIME"
+    await client.edit_message_text(
+        chat_id=callback_query.from_user.id,
+        message_id=callback_query.message.id,
+        text=text,
+        reply_markup=repl,
+        parse_mode=enums.ParseMode.MARKDOWN
+    )
+
+async def hentaidl(client, callback_query):
+    link = callback_query.data.split("_")[1]
     chatid = callback_query.from_user.id
-    messageid = callback_query.message.message_id
-    url = f"https://apikatsu.otakatsu.studio/api/hanime/link?id={link}" 
-    result = requests.get(url) 
-    result = result.json()  
-    url = result["data"][0]["url"]
-    callback_query.edit_message_text("""Wait till we fetch hentai for you...\nStatus: **DOWNLOADING**""", parse_mode="markdown")
-    is_hentai = hentai.find_one({"name": link})
-    if not is_hentai:
-        if not url == "":        
-            url3 = result["data"][2]["url"]
-            file1 = f"{link}.mp4"        
-            subprocess.run("ffmpeg -i {} -acodec copy -vcodec copy {}".format(url3, file1), shell=True)
-            callback_query.edit_message_text("""Uploading Now""", parse_mode="markdown")              
-            K = client.send_document(chat_id=chatid, document=f'{link}.mp4', caption=f"""Download By @hanime_dl_bot""", parse_mode="markdown")   
-            file_id = K.document.file_id
-            client.send_document(chat_id=CACHE_CHANNEL, document=file_id, caption=f"""Download By @hanime_dl_bot""", parse_mode="markdown")                               
-            hentai.insert_one({"name": link, "file_id": file_id})
-            os.remove(file1)
-        if url == "":     
-            url3 = result["data"][3]["url"]
-            file1 = f"{link}.mp4"        
-            subprocess.run("ffmpeg -i {} -acodec copy -vcodec copy {}".format(url3, file1), shell=True)
-            callback_query.edit_message_text("""Uploading Now""", parse_mode="markdown")       
-            K = client.send_document(chat_id=chatid, document=f'{link}.mp4', caption=f"""Download By @hanime_dl_bot""", parse_mode="markdown")               
-            file_id = K.document.file_id
-            client.send_document(chat_id=CACHE_CHANNEL, document=file_id, caption=f"""Download By @hanime_dl_bot""", parse_mode="markdown")                               
-            hentai.insert_one({"name": link, "file_id": file_id})
-            os.remove(file1)
+    
+    await callback_query.edit_message_text("Wait... Status: **DOWNLOADING**", parse_mode=enums.ParseMode.MARKDOWN)
+    
+    is_hentai = db_collection.find_one({"name": link})
     if is_hentai:
-        if not url == "":        
-            file_id = is_hentai["file_id"]   
-            callback_query.edit_message_text("""Uploading Now""", parse_mode="markdown")                       
-            client.send_document(chat_id=chatid, document=file_id, caption=f"""Download By @hanime_dl_bot""", parse_mode="markdown")                        
-        if url == "":     
-            file_id = is_hentai["file_id"]  
-            callback_query.edit_message_text("""Uploading Now""", parse_mode="markdown")                        
-            client.send_document(chat_id=chatid, document=file_id, caption=f"""Download By @hanime_dl_bot""", parse_mode="markdown")
- 
+        await callback_query.edit_message_text("Status: **UPLOADING**", parse_mode=enums.ParseMode.MARKDOWN)
+        await client.send_document(chat_id=chatid, document=is_hentai["file_id"], caption="Downloaded By @KENSHIN_ANIME)
+        return
+
+    # If not in DB, download using ffmpeg
+    api_url = f"https://apikatsu.otakatsu.studio/api/hanime/link?id={link}"
+    res_data = requests.get(api_url).json().get("data", [])
+    
+    if res_data:
+        video_url = res_data[-1]["url"] # Best quality available
+        file_name = f"{link}.mp4"
+        
+        subprocess.run(f'ffmpeg -i "{video_url}" -c copy "{file_name}"', shell=True)
+        
+        await callback_query.edit_message_text("Status: **UPLOADING**", parse_mode=enums.ParseMode.MARKDOWN)
+        
+        sent_msg = await client.send_document(chat_id=chatid, document=file_name, caption="Download By @KENSHIN_ANIME)
+        file_id = sent_msg.document.file_id
+        
+        # Save to Cache and DB
+        await client.send_document(chat_id=CACHE_CHANNEL, document=file_id, caption=f"Backup: {link}")
+        db_collection.insert_one({"name": link, "file_id": file_id})
+        
+        os.remove(file_name)
+    else:
+        await callback_query.edit_message_text("Download failed. Link not found.")
