@@ -1,12 +1,13 @@
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-import requests
+import aiohttp
+import asyncio
 import os
 
 # ========== CONFIG ==========
-API_ID = int(os.getenv("API_ID", "12345"))          # Telegram API ID
-API_HASH = os.getenv("API_HASH", "your_api_hash")    # Telegram API Hash
-BOT_TOKEN = os.getenv("BOT_TOKEN", "your_bot_token") # BotFather se le
+API_ID = int(os.getenv("API_ID", "12345"))
+API_HASH = os.getenv("API_HASH", "your_api_hash")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "your_bot_token")
 
 # ========== ANILIST API ==========
 ANILIST_URL = "https://graphql.anilist.co"
@@ -57,16 +58,6 @@ query ($id: Int) {
 }
 """
 
-# ========== BOT ==========
-app = Client(
-    "anime_bot",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN,
-    workers=100,  # Fast responses ke liye
-    parse_mode="html"
-)
-
 # ========== HELPERS ==========
 def get_studio(studios):
     if studios and studios.get('nodes'):
@@ -90,7 +81,6 @@ def format_season(season, year):
 def format_rating(score):
     if not score:
         return "N/A"
-    # Styled numbers: 𝟶𝟷𝟸𝟹𝟺𝟻𝟼𝟽𝟾𝟿
     styled = str(score).translate(str.maketrans("0123456789", "𝟶𝟷𝟸𝟹𝟺𝟻𝟼𝟽𝟾𝟿"))
     return f"{styled}/𝟷𝟶"
 
@@ -102,17 +92,32 @@ def clean_desc(text):
         return text[:380].rsplit(' ', 1)[0] + "..."
     return text
 
-def fetch_anilist(query, variables):
+async def fetch_anilist(query, variables):
     try:
-        r = requests.post(ANILIST_URL, json={"query": query, "variables": variables}, timeout=10)
-        return r.json().get('data') if r.status_code == 200 else None
-    except:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(ANILIST_URL, json={"query": query, "variables": variables}, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data.get('data')
+                return None
+    except Exception as e:
+        print(f"Fetch error: {e}")
         return None
 
-# ========== COMMANDS ==========
+# ========== BOT ==========
+app = Client(
+    "anime_bot",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    bot_token=BOT_TOKEN,
+    workers=100,
+    parse_mode="html"
+)
+
+# ========== HANDLERS ==========
 @app.on_message(filters.command("start"))
-def start(_, msg):
-    msg.reply_text(
+async def start(client, message):
+    await message.reply_text(
         "<b>🎌 Kenshin Anime Bot</b>\n\n"
         "Search any anime info with HD posters!\n\n"
         "<b>Usage:</b>\n"
@@ -122,30 +127,30 @@ def start(_, msg):
     )
 
 @app.on_message(filters.command("search"))
-def search(_, msg):
-    query = msg.text.replace("/search", "").strip()
+async def search(client, message):
+    query = message.text.replace("/search", "").strip()
     if not query:
-        return msg.reply_text("⚠️ Provide anime name!\nExample: /search Solo Leveling")
+        await message.reply_text("⚠️ Provide anime name!\nExample: /search Solo Leveling")
+        return
     
-    send_results(msg, query)
+    await send_results(client, message, query)
 
 @app.on_message(filters.text & ~filters.command(["start", "search"]))
-def direct_search(_, msg):
-    if len(msg.text) < 2:
+async def direct_search(client, message):
+    if len(message.text) < 2:
         return
-    send_results(msg, msg.text)
+    await send_results(client, message, message.text)
 
-def send_results(msg, query):
-    # Searching...
-    temp = msg.reply_text("🔍 <b>Searching...</b>")
+async def send_results(client, message, query):
+    temp = await message.reply_text("🔍 <b>Searching...</b>")
     
-    data = fetch_anilist(SEARCH_QUERY, {"search": query})
+    data = await fetch_anilist(SEARCH_QUERY, {"search": query})
     if not data or not data.get('Page', {}).get('media'):
-        return temp.edit_text("❌ <b>No results found!</b>")
+        await temp.edit_text("❌ <b>No results found!</b>")
+        return
     
     animes = data['Page']['media']
     
-    # Build buttons
     buttons = []
     for anime in animes:
         title = anime['title'].get('english') or anime['title'].get('romaji') or "Unknown"
@@ -157,32 +162,31 @@ def send_results(msg, query):
     
     buttons.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel")])
     
-    temp.edit_text(
+    await temp.edit_text(
         f"<b>🎯 {len(animes)} results for:</b> <code>{query}</code>\n\n<i>Select one:</i>",
         reply_markup=InlineKeyboardMarkup(buttons)
     )
 
-# ========== CALLBACKS ==========
 @app.on_callback_query()
-def callback_handler(_, cb):
-    data = cb.data
+async def callback_handler(client, callback_query):
+    data = callback_query.data
     
     if data == "cancel":
-        cb.answer("Cancelled!")
-        cb.message.delete()
+        await callback_query.answer("Cancelled!")
+        await callback_query.message.delete()
         return
     
     if data.startswith("info_"):
         anime_id = int(data.split("_")[1])
-        cb.answer("⏳ Loading...")
+        await callback_query.answer("⏳ Loading...")
         
-        info_data = fetch_anilist(INFO_QUERY, {"id": anime_id})
+        info_data = await fetch_anilist(INFO_QUERY, {"id": anime_id})
         if not info_data or not info_data.get('Media'):
-            return cb.message.edit_text("❌ <b>Error fetching info!</b>")
+            await callback_query.message.edit_text("❌ <b>Error fetching info!</b>")
+            return
         
         anime = info_data['Media']
         
-        # Build caption
         title = anime['title'].get('english') or anime['title'].get('romaji') or "Unknown"
         
         caption = f"""<b><blockquote>「 {title.upper()} 」</blockquote>
@@ -200,15 +204,13 @@ def callback_handler(_, cb):
 
 <blockquote>POWERED BY: [@KENSHIN_ANIME]</blockquote></b>"""
         
-        # Get HD image
         img = anime.get('coverImage', {}).get('extraLarge')
         
-        # Delete old message, send new with photo
-        cb.message.delete()
+        await callback_query.message.delete()
         
         if img:
-            app.send_photo(
-                chat_id=cb.message.chat.id,
+            await client.send_photo(
+                chat_id=callback_query.message.chat.id,
                 photo=img,
                 caption=caption,
                 reply_markup=InlineKeyboardMarkup([[
@@ -216,8 +218,8 @@ def callback_handler(_, cb):
                 ]])
             )
         else:
-            app.send_message(
-                chat_id=cb.message.chat.id,
+            await client.send_message(
+                chat_id=callback_query.message.chat.id,
                 text=caption,
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("🔍 Search Again", switch_inline_query_current_chat="")
