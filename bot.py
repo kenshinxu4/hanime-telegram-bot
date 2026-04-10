@@ -1,5 +1,6 @@
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.enums import ParseMode  # <-- YEH ADD KIYA
 import aiohttp
 import re
 import os
@@ -72,44 +73,39 @@ query ($id: Int) {
 
 # ========== HELPERS ==========
 def extract_season_number(title, relations):
-    """
-    Extract season number from title or relations
-    Jujutsu Kaisen Season 2 -> 02
-    Jujutsu Kaisen 2nd Season -> 02
-    """
+    """Extract season number from title"""
     if not title:
         return "01"
     
     title = title.lower()
     
-    # Pattern 1: "Season 2", "Season 3", etc.
+    # Pattern 1: "Season 2"
     match = re.search(r'season\s+(\d+)', title)
     if match:
         return f"{int(match.group(1)):02d}"
     
-    # Pattern 2: "2nd Season", "3rd Season", "4th Season"
+    # Pattern 2: "2nd Season"
     match = re.search(r'(\d+)(?:st|nd|rd|th)\s+season', title)
     if match:
         return f"{int(match.group(1)):02d}"
     
-    # Pattern 3: "Part 2", "Part 3"
+    # Pattern 3: "Part 2"
     match = re.search(r'part\s+(\d+)', title)
     if match:
         return f"{int(match.group(1)):02d}"
     
-    # Pattern 4: Just number at end like "Anime Name 2"
+    # Pattern 4: Number at end
     match = re.search(r'\s+(\d+)$', title)
     if match:
         return f"{int(match.group(1)):02d}"
     
-    # Pattern 5: Check if it's sequel from relations (PREQUEL exists = this is sequel)
+    # Check prequel
     if relations and relations.get('edges'):
         prequels = [edge for edge in relations['edges'] if edge.get('relationType') == 'PREQUEL']
         if prequels:
-            # This is a sequel, likely Season 2+
-            return "02"  # Default to 02 if prequel exists
+            return "02"
     
-    return "01"  # Default Season 01
+    return "01"
 
 def get_studio(studios):
     if studios and studios.get('nodes'):
@@ -151,13 +147,13 @@ async def fetch_anilist(query, variables):
         return None
 
 # ========== BOT ==========
+# parse_mode HATA DIYA Client se
 app = Client(
     "anime_bot",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN,
-    workers=100,
-    parse_mode="html"
+    workers=100
 )
 
 # ========== HANDLERS ==========
@@ -169,14 +165,18 @@ async def start(client, message):
         "<b>Usage:</b>\n"
         "• /search [anime name]\n"
         "• Direct message anime name\n\n"
-        "<i>Powered by Anilist</i>"
+        "<i>Powered by Anilist</i>",
+        parse_mode=ParseMode.HTML  # <-- HAR JAGAH ADD KIYA
     )
 
 @app.on_message(filters.command("search"))
 async def search(client, message):
     query = message.text.replace("/search", "").strip()
     if not query:
-        await message.reply_text("⚠️ Provide anime name!\nExample: /search Solo Leveling")
+        await message.reply_text(
+            "⚠️ Provide anime name!\nExample: /search Solo Leveling",
+            parse_mode=ParseMode.HTML
+        )
         return
     
     await send_results(client, message, query)
@@ -188,11 +188,17 @@ async def direct_search(client, message):
     await send_results(client, message, message.text)
 
 async def send_results(client, message, query):
-    temp = await message.reply_text("🔍 <b>Searching...</b>")
+    temp = await message.reply_text(
+        "🔍 <b>Searching...</b>",
+        parse_mode=ParseMode.HTML
+    )
     
     data = await fetch_anilist(SEARCH_QUERY, {"search": query})
     if not data or not data.get('Page', {}).get('media'):
-        await temp.edit_text("❌ <b>No results found!</b>")
+        await temp.edit_text(
+            "❌ <b>No results found!</b>",
+            parse_mode=ParseMode.HTML
+        )
         return
     
     animes = data['Page']['media']
@@ -210,7 +216,8 @@ async def send_results(client, message, query):
     
     await temp.edit_text(
         f"<b>🎯 {len(animes)} results for:</b> <code>{query}</code>\n\n<i>Select one:</i>",
-        reply_markup=InlineKeyboardMarkup(buttons)
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode=ParseMode.HTML
     )
 
 @app.on_callback_query()
@@ -228,19 +235,18 @@ async def callback_handler(client, callback_query):
         
         info_data = await fetch_anilist(INFO_QUERY, {"id": anime_id})
         if not info_data or not info_data.get('Media'):
-            await callback_query.message.edit_text("❌ <b>Error fetching info!</b>")
+            await callback_query.message.edit_text(
+                "❌ <b>Error fetching info!</b>",
+                parse_mode=ParseMode.HTML
+            )
             return
         
         anime = info_data['Media']
         
-        # Get titles
         title_english = anime['title'].get('english') or ""
         title_romaji = anime['title'].get('romaji') or ""
         
-        # Use romaji for season extraction (more reliable)
         season_num = extract_season_number(title_romaji, anime.get('relations'))
-        
-        # Display title (prefer English, fallback Romaji)
         display_title = title_english if title_english else title_romaji
         
         caption = f"""<b><blockquote>「 {display_title.upper()} 」</blockquote>
@@ -267,6 +273,7 @@ async def callback_handler(client, callback_query):
                 chat_id=callback_query.message.chat.id,
                 photo=img,
                 caption=caption,
+                parse_mode=ParseMode.HTML,  # <-- YAHA BHI ADD KIYA
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("🔍 Search Again", switch_inline_query_current_chat="")
                 ]])
@@ -275,6 +282,7 @@ async def callback_handler(client, callback_query):
             await client.send_message(
                 chat_id=callback_query.message.chat.id,
                 text=caption,
+                parse_mode=ParseMode.HTML,  # <-- YAHA BHI ADD KIYA
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("🔍 Search Again", switch_inline_query_current_chat="")
                 ]])
