@@ -1,7 +1,7 @@
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import aiohttp
-import asyncio
+import re
 import os
 
 # ========== CONFIG ==========
@@ -36,6 +36,7 @@ query ($id: Int) {
         title {
             romaji
             english
+            native
         }
         coverImage {
             extraLarge
@@ -54,11 +55,62 @@ query ($id: Int) {
             }
         }
         description
+        relations {
+            edges {
+                relationType
+                node {
+                    id
+                    title {
+                        romaji
+                    }
+                }
+            }
+        }
     }
 }
 """
 
 # ========== HELPERS ==========
+def extract_season_number(title, relations):
+    """
+    Extract season number from title or relations
+    Jujutsu Kaisen Season 2 -> 02
+    Jujutsu Kaisen 2nd Season -> 02
+    """
+    if not title:
+        return "01"
+    
+    title = title.lower()
+    
+    # Pattern 1: "Season 2", "Season 3", etc.
+    match = re.search(r'season\s+(\d+)', title)
+    if match:
+        return f"{int(match.group(1)):02d}"
+    
+    # Pattern 2: "2nd Season", "3rd Season", "4th Season"
+    match = re.search(r'(\d+)(?:st|nd|rd|th)\s+season', title)
+    if match:
+        return f"{int(match.group(1)):02d}"
+    
+    # Pattern 3: "Part 2", "Part 3"
+    match = re.search(r'part\s+(\d+)', title)
+    if match:
+        return f"{int(match.group(1)):02d}"
+    
+    # Pattern 4: Just number at end like "Anime Name 2"
+    match = re.search(r'\s+(\d+)$', title)
+    if match:
+        return f"{int(match.group(1)):02d}"
+    
+    # Pattern 5: Check if it's sequel from relations (PREQUEL exists = this is sequel)
+    if relations and relations.get('edges'):
+        prequels = [edge for edge in relations['edges'] if edge.get('relationType') == 'PREQUEL']
+        if prequels:
+            # This is a sequel, likely Season 2+
+            return "02"  # Default to 02 if prequel exists
+    
+    return "01"  # Default Season 01
+
 def get_studio(studios):
     if studios and studios.get('nodes'):
         return studios['nodes'][0]['name']
@@ -71,12 +123,6 @@ def format_status(status):
         "NOT_YET_RELEASED": "not yet released",
         "CANCELLED": "cancelled"
     }.get(status, status.lower().replace("_", " "))
-
-def format_season(season, year):
-    if season and year:
-        num = {"WINTER": "01", "SPRING": "02", "SUMMER": "03", "FALL": "04"}.get(season, "")
-        return num
-    return "N/A"
 
 def format_rating(score):
     if not score:
@@ -187,12 +233,20 @@ async def callback_handler(client, callback_query):
         
         anime = info_data['Media']
         
-        title = anime['title'].get('english') or anime['title'].get('romaji') or "Unknown"
+        # Get titles
+        title_english = anime['title'].get('english') or ""
+        title_romaji = anime['title'].get('romaji') or ""
         
-        caption = f"""<b><blockquote>「 {title.upper()} 」</blockquote>
+        # Use romaji for season extraction (more reliable)
+        season_num = extract_season_number(title_romaji, anime.get('relations'))
+        
+        # Display title (prefer English, fallback Romaji)
+        display_title = title_english if title_english else title_romaji
+        
+        caption = f"""<b><blockquote>「 {display_title.upper()} 」</blockquote>
 ═══════════════════
 🌸 Category: {anime.get('format', 'Anime')}
-🍥 Season: {format_season(anime.get('season'), anime.get('seasonYear'))} 
+🍥 Season: {season_num} 
 🧊 Episodes: {anime.get('episodes') or 'N/A'} 
 🍣 Runtime: {anime.get('duration') or 'N/A'} min per ep 
 🍡 Rating: {format_rating(anime.get('averageScore'))}
