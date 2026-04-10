@@ -1,7 +1,2 @@
-pyrogram
-TgCrypto
-pymongo
-dnspython
-ffmpeg
-requests
-requests_html
+pyrofork==2.3.45
+requests==2.31.0
